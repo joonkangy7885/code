@@ -1,0 +1,107 @@
+import pandas as pd 
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf 
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.arima.model import ARIMA
+from pmdarima.arima import auto_arima
+from statsmodels.tsa.stattools import acf
+plt.rcParams.update({'figure.figsize':(9,7), 'figure.dpi':120})
+
+file_path = "/Users/joonkng/Desktop/pandasApp/industrial_EIA.csv"
+industrial_EIA = pd.read_csv(file_path, index_col="time")
+energy_data = pd.to_numeric(industrial_EIA.loc['emission'], errors='coerce').dropna()
+energy_data.index = pd.to_datetime(energy_data.index, format='%m/%d/%y')
+energy_data = energy_data.asfreq('MS')
+
+#Original series
+fig, axes = plt.subplots(3, 2, figsize=(14, 12))
+axes[0, 0].plot(energy_data)
+axes[0, 0].set_title('Original Series')
+plot_acf(energy_data, ax=axes[0, 1], lags=40)
+
+#1st differencing
+axes[1, 0].plot(energy_data.diff())
+axes[1, 0].set_title('1st Order Differencing')
+plot_acf(energy_data.diff().dropna(), ax=axes[1, 1], lags=40)
+
+#2nd differencing
+axes[2, 0].plot(energy_data.diff().diff())
+axes[2, 0].set_title('2nd Order Differencing')
+plot_acf(energy_data.diff().diff().dropna(), ax=axes[2, 1], lags=40)
+
+fig.tight_layout()
+plt.show()
+
+# ADF test
+result = adfuller(energy_data)
+print('ADF Statistic: %f' % result[0])
+print('p-value: %f' % result[1])
+print('Critical Values:')
+for key, value in result[4].items():
+    print('\t%s: %.3f' % (key, value))
+if result[1] < 0.05:
+    print("Reject the null hypothesis (H0), the data does not have a unit root and is stationary")
+else:
+    print("Fail to reject the null hypothesis (H0), the data has a unit root and is non-stationary")
+
+plt.rcParams.update({'figure.figsize':(9,3), 'figure.dpi':120})
+
+# PACF
+fig, axes = plt.subplots(1, 2, figsize=(14, 12))
+axes[0].plot(energy_data.diff())
+axes[0].set_title('1st Differencing')
+axes[1].set(ylim=(0,5))
+plot_pacf(energy_data.diff().dropna(), ax=axes[1], lags=40)
+axes[1].set_title('Partial Autocorrelation for 1st Differencing')
+plt.tight_layout()
+plt.show()
+
+# ACF
+fig, axes = plt.subplots(1, 2, figsize=(14, 12))
+axes[0].plot(energy_data.diff())
+axes[0].set_title('1st Differencing')
+axes[1].set(ylim=(0,1.2))
+plot_acf(energy_data.diff().dropna(), ax=axes[1], lags=40)
+axes[1].set_title('Autocorrelation for 1st Differencing')
+plt.tight_layout()
+plt.show()
+
+# ARIMA forecast
+train = energy_data[:'1998-06-01']
+test = energy_data['1998-06-01':]
+
+stepwise_model = auto_arima(train, seasonal=True, m=12,
+                            start_p=1, start_q=1,
+                            max_p=6, max_q=6, start_P=0, D=None,
+                            test='adf', seasonal_test='ocsb', max_P=3, max_Q=3,
+                            trace=True, error_action='ignore', suppress_warnings=True,
+                            stepwise=True)
+order = stepwise_model.order
+seasonal_order = stepwise_model.seasonal_order
+model = ARIMA(train, order=order, seasonal_order=seasonal_order)
+model_fit = model.fit()
+print(model_fit.summary())
+
+
+residuals = pd.DataFrame(model_fit.resid)
+fig, ax = plt.subplots(1, 2, figsize=(14, 5))
+residuals.plot(title="Residuals", ax=ax[0])
+residuals.plot(kind='kde', title='Density', ax=ax[1])
+plt.show()
+
+
+pred = model_fit.get_forecast(steps=len(test))
+pred_mean = pred.predicted_mean
+pred_conf = pred.conf_int()
+
+
+plt.figure(figsize=(15, 5))
+plt.plot(train, label='Training', color='blue')
+plt.plot(test, label='Actual', color='green')
+plt.plot(pred_mean, label='Forecast', color='orange')
+plt.fill_between(pred_conf.index, pred_conf.iloc[:, 0], pred_conf.iloc[:, 1], color='gray', alpha=.15)
+plt.title('Forecast vs Actuals')
+plt.xlabel('Year')
+plt.ylabel('Energy Data')
+plt.legend()
+plt.show()
