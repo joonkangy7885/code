@@ -17,17 +17,17 @@ energy_data = pd.to_numeric(ipcc.loc['Energy'], errors='coerce').dropna()
 fig, axes = plt.subplots(3, 2, sharex=True)
 axes[0, 0].plot(energy_data)
 axes[0, 0].set_title('Original Series')
-plot_acf(energy_data, ax=axes[0, 1])
+plot_acf(energy_data, ax=axes[0, 1], lags=len(energy_data) - 1)
 
 # 1st Differencing Plot
 axes[1, 0].plot(energy_data.diff())
 axes[1, 0].set_title('1st Order Differencing')
-plot_acf(energy_data.diff().dropna(), ax=axes[1, 1])
+plot_acf(energy_data.diff().dropna(), ax=axes[1, 1], lags=len(energy_data) - 2)
 
 # 2nd Differencing Plot
 axes[2, 0].plot(energy_data.diff().diff())
 axes[2, 0].set_title('2nd Order Differencing')
-plot_acf(energy_data.diff().diff().dropna(), ax=axes[2, 1])
+plot_acf(energy_data.diff().diff().dropna(), ax=axes[2, 1], lags=len(energy_data) - 3)
 
 plt.show()
 
