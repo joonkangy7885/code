@@ -1,0 +1,72 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.model_selection import train_test_split, GridSearchCV
+import matplotlib.pyplot as plt
+
+file_path = "/Users/joonkng/Desktop/pandasApp/industrial_EIA.csv"
+data = pd.read_csv(file_path)
+data_long = pd.melt(data, id_vars=['time'], var_name='date', value_name='emission')
+data_long = data_long[data_long['time'] == 'emission'].drop(columns=['time'])
+data_long['date'] = pd.to_datetime(data_long['date'], format='%m/%d/%y')
+data_long.set_index('date', inplace=True)
+energy_data = pd.to_numeric(data_long['emission'], errors='coerce')
+
+def create_lag_features(data, lags=12):
+    df = pd.DataFrame(data, columns=['emission'])
+    for i in range(1, lags + 1):
+        df[f'lag_{i}'] = df['emission'].shift(i)
+    df.dropna(inplace=True)
+    return df
+
+lagged_data = create_lag_features(energy_data, lags=12)
+
+
+X = lagged_data.drop(columns=['emission'])
+y = lagged_data['emission']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.7, shuffle=False)
+
+param_grid = {
+    'n_estimators': [100, 200, 500],
+    'max_depth': [None, 5, 10, 15, 20, 25, 30],
+    'min_samples_split': [2, 5, 10, 15, 20]
+}
+rf_model = RandomForestRegressor(random_state=42)
+grid_search = GridSearchCV(estimator=rf_model, param_grid=param_grid, cv=3, n_jobs=-1, scoring='neg_mean_squared_error')
+grid_search.fit(X_train, y_train)
+
+best_params = grid_search.best_params_
+best_rf_model = grid_search.best_estimator_
+
+y_pred_rf = best_rf_model.predict(X_test)
+plt.figure(figsize=(15, 5))
+plt.plot(y_train.index, y_train, label='Training', color='blue')
+plt.plot(y_test.index, y_test, label='Actual', color='green')
+plt.plot(y_test.index, y_pred_rf, label='Forecast (Random Forest)', color='orange')
+plt.title('Forecast vs Actuals (Random Forest)')
+plt.xlabel('Year')
+plt.ylabel('Energy Data')
+plt.legend()
+plt.show()
+
+rmse_rf = np.sqrt(mean_squared_error(y_test, y_pred_rf))
+print(f'Random Forest Test RMSE: {rmse_rf}')
+
+mae_rf = mean_absolute_error(y_test, y_pred_rf)
+print(f'Random Forest Test MAE: {mae_rf}')
+
+mape_rf = np.mean(np.abs((y_test - y_pred_rf) / y_test)) * 100
+print(f'Random Forest Test MAPE: {mape_rf}%')
+
+residuals = y_test - y_pred_rf
+plt.figure(figsize=(15, 5))
+plt.plot(y_test.index, residuals, label='Residuals', color='red')
+plt.axhline(y=0, color='black', linestyle='--')
+plt.title('Residuals of the Forecast')
+plt.xlabel('Year')
+plt.ylabel('Residuals')
+plt.legend()
+plt.show()
+
+print(f'Best parameters found: {best_params}')
