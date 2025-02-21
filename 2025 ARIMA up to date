@@ -1,0 +1,122 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.stats.diagnostic import het_arch, het_goldfeldquandt, het_breuschpagan, het_white
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from pmdarima import auto_arima
+from arch import arch_model
+from scipy.stats import shapiro, normaltest
+
+file_path = "/Users/joonkng/Desktop/pandasApp/industrial_EIA.csv"
+data = pd.read_csv(file_path)
+data = data.set_index("time").T
+data.columns = ["emission"] 
+data.index = pd.to_datetime(data.index, format="%m/%d/%y")
+data["emission"] = pd.to_numeric(data["emission"], errors="coerce")
+data = data.dropna()
+
+
+plt.figure(figsize=(10, 5))
+plt.plot(data["emission"], label="Original Data")
+plt.ylabel('Million Metric Tons of Carbon Dioxide (MMTCO₂)')
+plt.xlabel ('Year')
+plt.legend()
+plt.show()
+
+def check_stationarity(series):
+    """ Performs Augmented Dickey-Fuller (ADF) test """
+    result = adfuller(series.dropna())
+    print("\nADF Test Results:")
+    print(f"ADF Statistic: {result[0]:.4f}")
+    print(f"p-value: {result[1]:.4f}")
+    return result[1] < 0.05
+print("\nChecking Stationarity of Original Data:")
+is_stationary = check_stationarity(data["emission"])
+
+if not is_stationary:
+    data["emission_diff"] = data["emission"].diff().dropna()
+    print("\nChecking Stationarity of Differenced Data:")
+    is_stationary_diff = check_stationarity(data["emission_diff"])
+    
+    if is_stationary_diff:
+        plt.figure(figsize=(12,6))
+        plot_acf(data["emission_diff"].dropna(), lags=10, ax=plt.subplot(121))
+        plot_pacf(data["emission_diff"].dropna(), lags=10, ax=plt.subplot(122))
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("Data is still not stationary after differencing. Consider additional transformations.")
+else:
+    data["emission_diff"] = data["emission"]
+
+print("\nRunning AutoARIMA to find best parameters...")
+best_arima = auto_arima(data["emission_diff"].dropna(), 
+                        seasonal=False,  
+                        stepwise=True, 
+                        suppress_warnings=True, 
+                        error_action="ignore",
+                        trace=True)
+print("\nBest AutoARIMA Model Summary:")
+print(best_arima.summary())
+best_order = best_arima.order
+
+best_model = ARIMA(data["emission_diff"].dropna(), order=best_order).fit()
+print("\nFitted ARIMA Model Summary:")
+print(best_model.summary())
+residuals = best_model.resid
+
+plt.figure(figsize=(12, 6))
+plt.subplot(121)
+plt.plot(residuals, label='Residuals')
+plt.axhline(0, color='red', linestyle='--', linewidth=1)
+plt.title('Residuals from Best ARIMA Model')
+plt.legend()
+plt.subplot(122)
+residuals.plot(kind='kde')
+plt.title('Residual Density')
+plt.show()
+shapiro_stat, shapiro_p = shapiro(residuals)
+print(f"Shapiro-Wilk Test: Statistic = {shapiro_stat}, p-value = {shapiro_p}")
+
+train = data.loc[:"2010"]
+test = data.loc["2011":]
+forecast = best_model.get_forecast(steps=len(test))
+forecast_mean = forecast.predicted_mean
+conf_int = forecast.conf_int()
+forecast_mean.index = test.index
+conf_int.index = test.index
+
+if not is_stationary:
+    last_value = train["emission"].iloc[-1]
+    forecast_mean = last_value + forecast_mean.cumsum()
+    conf_int.iloc[:, 0] = last_value + conf_int.iloc[:, 0].cumsum()
+    conf_int.iloc[:, 1] = last_value + conf_int.iloc[:, 1].cumsum()
+
+plt.figure(figsize=(12, 6))
+plt.plot(train["emission"], label="Training Data", color="blue")
+plt.plot(test["emission"], label="Actual Data", color="green")
+plt.plot(forecast_mean, label="Forecast", color="red")
+plt.fill_between(conf_int.index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='pink', alpha=0.3)
+plt.ylim([min(data["emission"]) - 5, max(data["emission"]) + 5])
+plt.title("ARIMA Forecast vs Actual (Starting at 2011)")
+plt.ylabel('Million Metric Tons of Carbon Dioxide (MMTCO₂)')
+plt.xlabel('Year')
+plt.legend()
+plt.show()
+
+def mean_absolute_percentage_error(y_true, y_pred):
+    """ Compute Mean Absolute Percentage Error (MAPE) """
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+mse = mean_squared_error(test["emission"], forecast_mean)
+mae = mean_absolute_error(test["emission"], forecast_mean)
+rmse = np.sqrt(mse)
+mape = mean_absolute_percentage_error(test["emission"], forecast_mean)
+
+print("\nForecast Accuracy Metrics:")
+print(f"MSE: {mse:.4f}")
+print(f"MAE: {mae:.4f}")
+print(f"RMSE: {rmse:.4f}")
+print(f"MAPE: {mape:.4f}%")
